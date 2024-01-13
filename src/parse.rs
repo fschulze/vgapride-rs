@@ -1,4 +1,4 @@
-use crate::flag::Flag;
+use crate::flag::{Command, Flag};
 use ahash::AHashMap;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_while1, take_while_m_n};
@@ -185,6 +185,12 @@ fn colors(input: &str) -> IResult<&str, Vec<Color>> {
 }
 
 #[derive(Debug)]
+pub enum StructureType {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug)]
 pub enum Element {
     Comment,
     Names(Vec<String>),
@@ -194,7 +200,7 @@ pub enum Element {
     TextColor(Color),
     ColorDeclaration(String, Color),
     Include(String),
-    Structure(String, Vec<Color>),
+    Structure(StructureType, Vec<Color>),
     Polygon(crate::flag::PolygonType, Vec<crate::flag::Point>, Color),
     Triangle(
         crate::flag::Point,
@@ -290,7 +296,16 @@ fn structure(input: &str) -> IResult<&str, Element> {
                 preceded(multispace0, tag("}")),
             ),
         ),
-        |(kind, colors)| Element::Structure(kind.to_string(), colors),
+        |(kind, colors)| {
+            Element::Structure(
+                match kind {
+                    "horizontal" => StructureType::Horizontal,
+                    "vertical" => StructureType::Vertical,
+                    _ => panic!("how did we get here?"),
+                },
+                colors,
+            )
+        },
     )
     .parse(input)
 }
@@ -390,14 +405,15 @@ fn elements(input: &str) -> IResult<&str, Vec<Element>> {
     })(input)
 }
 
-pub fn parse_flag(input: &str) -> Result<Flag> {
-    // let (_, elements) = elements(input)?;
+pub fn parse_flag(input: &str) -> Result<(Vec<String>, Flag)> {
     let (_, elements) = all_consuming(terminated(elements, multispace0))(input)?;
     let mut names = None;
     let mut description = None;
     let mut credits = None;
     let mut textsize = None;
     let mut textcolor = None;
+    let mut commands = Vec::new();
+    let mut includes = Vec::new();
     let mut colors: AHashMap<String, crate::flag::Color> = Default::default();
     colors.insert("black".to_string(), crate::flag::Color::new(0, 0, 0));
     colors.insert("white".to_string(), crate::flag::Color::new(255, 255, 255));
@@ -452,32 +468,84 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
                         colors.insert(name, color);
                     }
                     Color::Variable(_name) => {
-                        println!("{:?}", (_name, name));
+                        let color = colors
+                            .get(&_name)
+                            .ok_or(ParseError::MissingError(format!("${}", _name)))?;
+                        colors.insert(_name, *color);
                     }
                 };
             }
             Element::Include(name) => {
-                println!("include {:?}", name);
+                includes.push(name);
             }
-            Element::Structure(kind, colors) => {
-                println!("{:?}", (kind, colors));
+            Element::Structure(kind, _colors) => {
+                let pixels = match kind {
+                    StructureType::Horizontal => crate::flag::WIDTH - 1,
+                    StructureType::Vertical => crate::flag::HEIGHT - 1,
+                };
+                let stripes =
+                    i16::try_from(_colors.len()).expect("couldn't convert number of colors to i16");
+                for (index, _color) in _colors.iter().enumerate() {
+                    let index = i16::try_from(index).expect("couldn't convert colors index to i16");
+                    let color = match _color {
+                        Color::RGBColor(color) => color,
+                        Color::Variable(_name) => colors
+                            .get(_name)
+                            .ok_or(ParseError::MissingError(format!("${}", _name)))?,
+                    };
+                    let low = (pixels * index) / stripes;
+                    let high = (pixels * (index + 1)) / stripes;
+                    let (a, b) = match kind {
+                        StructureType::Horizontal => (
+                            crate::flag::Point { x: low, y: 0 },
+                            crate::flag::Point {
+                                x: high,
+                                y: crate::flag::HEIGHT,
+                            },
+                        ),
+                        StructureType::Vertical => (
+                            crate::flag::Point { x: 0, y: low },
+                            crate::flag::Point {
+                                x: crate::flag::WIDTH,
+                                y: high,
+                            },
+                        ),
+                    };
+                    commands.push(Command::Rectangle(a, b, *color));
+                }
             }
-            Element::Polygon(kind, points, color) => {
-                println!("polygon {:?}", (kind, points, color));
+            Element::Polygon(kind, points, _color) => {
+                let color = match _color {
+                    Color::RGBColor(color) => color,
+                    Color::Variable(_name) => *colors
+                        .get(&_name)
+                        .ok_or(ParseError::MissingError(format!("${}", _name)))?,
+                };
+                commands.push(Command::Polygon(kind, points, color));
             }
-            Element::Triangle(p1, p2, p3, color) => {
-                println!("triangle {:?}", (p1, p2, p3, color));
+            Element::Triangle(p1, p2, p3, _color) => {
+                let color = match _color {
+                    Color::RGBColor(color) => color,
+                    Color::Variable(_name) => *colors
+                        .get(&_name)
+                        .ok_or(ParseError::MissingError(format!("${}", _name)))?,
+                };
+                commands.push(Command::Triangle(p1, p2, p3, color));
             }
             Element::Comment => {}
         }
     }
-    Ok(Flag {
-        names: names.ok_or(ParseError::MissingError("$names".to_string()))?,
-        description: description.ok_or(ParseError::MissingError("$description".to_string()))?,
-        credits,
-        textsize: textsize.unwrap_or(4),
-        textcolor: textcolor.unwrap_or(crate::flag::Color::new(255, 255, 255)),
-    })
+    Ok((
+        includes,
+        Flag {
+            names: names.ok_or(ParseError::MissingError("$names".to_string()))?,
+            description: description.ok_or(ParseError::MissingError("$description".to_string()))?,
+            credits,
+            textsize: textsize.unwrap_or(4),
+            textcolor: textcolor.unwrap_or(crate::flag::Color::new(255, 255, 255)),
+            commands,
+        },
+    ))
 }
 
 #[cfg(test)]

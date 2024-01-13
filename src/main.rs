@@ -35,7 +35,7 @@ struct Args {
     verbose: clap_verbosity_flag::Verbosity,
 }
 
-fn read_flag(path: PathBuf) -> Result<Option<Flag>> {
+fn read_flag(path: PathBuf) -> Result<Option<(Vec<String>, Flag)>> {
     if let Some(extension) = path.extension() {
         let extension = extension.to_ascii_lowercase();
         if extension == "flag" && path.is_file() {
@@ -64,7 +64,11 @@ fn run(args: Args) -> Result<()> {
             flags.push(flag);
         }
     }
-    println!("{:?}", flags);
+    for (includes, flag) in flags {
+        println!("{:?}", flag.names);
+        println!("includes {:?}", includes);
+        println!("{:?}\n", flag.commands);
+    }
     Ok(())
 }
 
