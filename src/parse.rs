@@ -78,6 +78,7 @@ fn strings_list(input: &str) -> IResult<&str, Vec<String>> {
 pub enum Element {
     Names(Vec<String>),
     Description(String),
+    Credits(String),
 }
 
 fn names(input: &str) -> IResult<&str, Element> {
@@ -96,9 +97,19 @@ fn description(input: &str) -> IResult<&str, Element> {
     Ok((input, Element::Description(description)))
 }
 
+fn credits(input: &str) -> IResult<&str, Element> {
+    let (input, credits) = preceded(
+        tag("credits"),
+        preceded(preceded(multispace0, tag("=")), string),
+    )(input)?;
+    Ok((input, Element::Credits(credits)))
+}
+
 fn variable(input: &str) -> IResult<&str, Element> {
-    let (input, variable) =
-        preceded(multispace0, preceded(tag("$"), alt((names, description))))(input)?;
+    let (input, variable) = preceded(
+        multispace0,
+        preceded(tag("$"), alt((names, description, credits))),
+    )(input)?;
     Ok((input, variable))
 }
 
@@ -113,6 +124,7 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
     let (_, elements) = elements(input)?;
     let mut names = None;
     let mut description = None;
+    let mut credits = None;
     for element in elements {
         match element {
             Element::Names(_names) => {
@@ -129,11 +141,19 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
                     return Err(ParseError::MultipleError("$description".to_string()));
                 }
             }
+            Element::Credits(_credits) => {
+                if let None = credits {
+                    credits.replace(_credits);
+                } else {
+                    return Err(ParseError::MultipleError("$credits".to_string()));
+                }
+            }
         }
     }
     Ok(Flag {
         names: names.ok_or(ParseError::MissingError("$names".to_string()))?,
         description: description.ok_or(ParseError::MissingError("$description".to_string()))?,
+        credits,
     })
 }
 
