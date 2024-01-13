@@ -1,10 +1,11 @@
 use crate::flag::Flag;
+use ahash::AHashMap;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_while1};
 use nom::character::complete::{alpha1, alphanumeric1, char, digit1, multispace0};
 use nom::combinator::{all_consuming, map, opt, peek};
 use nom::multi::{fold_many1, separated_list1};
-use nom::sequence::{delimited, pair, preceded, tuple};
+use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
 use nom::{IResult, Parser};
 use std::backtrace::Backtrace;
 use std::str::FromStr;
@@ -49,6 +50,14 @@ impl From<nom::Err<nom::error::Error<&str>>> for ParseError {
             },
         }
     }
+}
+
+fn name(input: &str) -> IResult<&str, &str> {
+    preceded(peek(alpha1), alphanumeric1).parse(input)
+}
+
+fn variable_name(input: &str) -> IResult<&str, &str> {
+    preceded(multispace0, preceded(tag("$"), name)).parse(input)
 }
 
 fn string_chars(input: &str) -> IResult<&str, &str> {
@@ -133,14 +142,7 @@ fn color_rgb(input: &str) -> IResult<&str, Color> {
 }
 
 fn color_variable(input: &str) -> IResult<&str, Color> {
-    map(
-        preceded(
-            multispace0,
-            preceded(tag("$"), preceded(peek(alpha1), alphanumeric1)),
-        ),
-        |r: &str| Color::Variable(r.to_string()),
-    )
-    .parse(input)
+    map(variable_name, |r: &str| Color::Variable(r.to_string())).parse(input)
 }
 
 fn color(input: &str) -> IResult<&str, Color> {
@@ -155,6 +157,7 @@ pub enum Element {
     Credits(String),
     TextSize(i16),
     TextColor(Color),
+    ColorDeclaration(String, Color),
 }
 
 fn comment(input: &str) -> IResult<&str, Element> {
@@ -205,6 +208,12 @@ fn textcolor(input: &str) -> IResult<&str, Element> {
     Ok((input, Element::TextColor(textcolor)))
 }
 
+fn color_declaration(input: &str) -> IResult<&str, Element> {
+    let (input, (name, color)) =
+        separated_pair(variable_name, preceded(multispace0, tag("=")), color)(input)?;
+    Ok((input, Element::ColorDeclaration(name.to_string(), color)))
+}
+
 fn variable_declaration(input: &str) -> IResult<&str, Element> {
     let (input, variable_declaration) = preceded(
         multispace0,
@@ -217,7 +226,7 @@ fn variable_declaration(input: &str) -> IResult<&str, Element> {
 }
 
 fn element(input: &str) -> IResult<&str, Element> {
-    alt((comment, variable_declaration)).parse(input)
+    alt((comment, variable_declaration, color_declaration)).parse(input)
 }
 
 fn elements(input: &str) -> IResult<&str, Vec<Element>> {
@@ -235,6 +244,9 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
     let mut credits = None;
     let mut textsize = None;
     let mut textcolor = None;
+    let mut colors: AHashMap<String, crate::flag::Color> = Default::default();
+    colors.insert("black".to_string(), crate::flag::Color::new(0, 0, 0));
+    colors.insert("white".to_string(), crate::flag::Color::new(255, 255, 255));
     for element in elements {
         match element {
             Element::Names(_names) => {
@@ -267,10 +279,28 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
             }
             Element::TextColor(_textcolor) => {
                 if let None = textcolor {
-                    textcolor.replace(_textcolor);
+                    textcolor.replace(match _textcolor {
+                        Color::RGBColor(color) => color,
+                        Color::Variable(_name) => *colors
+                            .get(&_name)
+                            .ok_or(ParseError::MissingError(format!("${}", _name)))?,
+                    });
                 } else {
                     return Err(ParseError::MultipleError("$textcolor".to_string()));
                 }
+            }
+            Element::ColorDeclaration(name, color) => {
+                if colors.contains_key(&name) {
+                    return Err(ParseError::MultipleError(format!("${}", name)));
+                }
+                match color {
+                    Color::RGBColor(color) => {
+                        colors.insert(name, color);
+                    }
+                    Color::Variable(_name) => {
+                        println!("{:?}", (_name, name));
+                    }
+                };
             }
             Element::Comment => {}
         }
@@ -280,6 +310,7 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
         description: description.ok_or(ParseError::MissingError("$description".to_string()))?,
         credits,
         textsize: textsize.unwrap_or(4),
+        textcolor: textcolor.unwrap_or(crate::flag::Color::new(255, 255, 255)),
     })
 }
 

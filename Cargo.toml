@@ -6,6 +6,7 @@ edition = "2021"
 license = "GPL-3.0-only"
 
 [dependencies]
+ahash = "0.8"
 anyhow = { version = "1", features = ["backtrace"] }
 clap = { version = "4", features = ["derive"] }
 clap-verbosity-flag = "2"
