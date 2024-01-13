@@ -1,4 +1,5 @@
 use crate::flag::Flag;
+use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while1};
 use nom::character::complete::multispace0;
 use nom::multi::{fold_many1, separated_list1};
@@ -76,6 +77,7 @@ fn strings_list(input: &str) -> IResult<&str, Vec<String>> {
 #[derive(Debug)]
 pub enum Element {
     Names(Vec<String>),
+    Description(String),
 }
 
 fn names(input: &str) -> IResult<&str, Element> {
@@ -86,8 +88,17 @@ fn names(input: &str) -> IResult<&str, Element> {
     Ok((input, Element::Names(names)))
 }
 
+fn description(input: &str) -> IResult<&str, Element> {
+    let (input, description) = preceded(
+        tag("description"),
+        preceded(preceded(multispace0, tag("=")), string),
+    )(input)?;
+    Ok((input, Element::Description(description)))
+}
+
 fn variable(input: &str) -> IResult<&str, Element> {
-    let (input, variable) = preceded(multispace0, preceded(tag("$"), names))(input)?;
+    let (input, variable) =
+        preceded(multispace0, preceded(tag("$"), alt((names, description))))(input)?;
     Ok((input, variable))
 }
 
@@ -101,6 +112,7 @@ fn elements(input: &str) -> IResult<&str, Vec<Element>> {
 pub fn parse_flag(input: &str) -> Result<Flag> {
     let (_, elements) = elements(input)?;
     let mut names = None;
+    let mut description = None;
     for element in elements {
         match element {
             Element::Names(_names) => {
@@ -110,10 +122,18 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
                     return Err(ParseError::MultipleError("$names".to_string()));
                 }
             }
+            Element::Description(_description) => {
+                if let None = description {
+                    description.replace(_description);
+                } else {
+                    return Err(ParseError::MultipleError("$description".to_string()));
+                }
+            }
         }
     }
     Ok(Flag {
         names: names.ok_or(ParseError::MissingError("$names".to_string()))?,
+        description: description.ok_or(ParseError::MissingError("$description".to_string()))?,
     })
 }
 
