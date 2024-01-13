@@ -11,6 +11,11 @@ impl Color {
     }
 }
 
+#[derive(Debug)]
+pub enum PolygonType {
+    Filled,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Point {
     pub x: i16,

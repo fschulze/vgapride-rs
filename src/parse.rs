@@ -17,6 +17,8 @@ pub enum ParseError {
     MissingError(String),
     #[error("multiple {0}")]
     MultipleError(String),
+    #[error("unknown polygon type")]
+    UnknownPolygonType,
     #[error("no $names")]
     NomError {
         #[from]
@@ -193,6 +195,7 @@ pub enum Element {
     ColorDeclaration(String, Color),
     Include(String),
     Structure(String, Vec<Color>),
+    Polygon(crate::flag::PolygonType, Vec<crate::flag::Point>, Color),
     Triangle(
         crate::flag::Point,
         crate::flag::Point,
@@ -307,6 +310,45 @@ fn point(input: &str) -> IResult<&str, crate::flag::Point> {
     .parse(input)
 }
 
+fn points(input: &str) -> IResult<&str, Vec<crate::flag::Point>> {
+    separated_list1(comma, point).parse(input)
+}
+
+fn points_list(input: &str) -> IResult<&str, Vec<crate::flag::Point>> {
+    delimited(
+        preceded(multispace0, tag("[")),
+        points,
+        preceded(multispace0, tag("]")),
+    )
+    .parse(input)
+}
+
+fn polygon_type(input: &str) -> IResult<&str, crate::flag::PolygonType> {
+    let (input, kind) = preceded(multispace0, tag("Filled")).parse(input)?;
+    match kind {
+        "Filled" => Ok((input, crate::flag::PolygonType::Filled)),
+        _ => panic!("how did we reach this?"),
+    }
+}
+
+fn polygon(input: &str) -> IResult<&str, Element> {
+    map(
+        preceded(
+            multispace0,
+            preceded(
+                tag("Polygon"),
+                tuple((
+                    terminated(polygon_type, comma),
+                    terminated(points_list, comma),
+                    color,
+                )),
+            ),
+        ),
+        |(kind, points, color)| Element::Polygon(kind, points, color),
+    )
+    .parse(input)
+}
+
 fn triangle(input: &str) -> IResult<&str, Element> {
     map(
         preceded(
@@ -327,7 +369,7 @@ fn triangle(input: &str) -> IResult<&str, Element> {
 }
 
 fn command(input: &str) -> IResult<&str, Element> {
-    alt((include, triangle)).parse(input)
+    alt((include, polygon, triangle)).parse(input)
 }
 
 fn element(input: &str) -> IResult<&str, Element> {
@@ -419,6 +461,9 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
             }
             Element::Structure(kind, colors) => {
                 println!("{:?}", (kind, colors));
+            }
+            Element::Polygon(kind, points, color) => {
+                println!("polygon {:?}", (kind, points, color));
             }
             Element::Triangle(p1, p2, p3, color) => {
                 println!("triangle {:?}", (p1, p2, p3, color));
