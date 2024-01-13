@@ -11,6 +11,12 @@ impl Color {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Point {
+    pub x: i16,
+    pub y: i16,
+}
+
 #[derive(Debug)]
 pub struct Flag {
     pub names: Vec<String>,

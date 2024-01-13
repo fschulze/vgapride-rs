@@ -72,8 +72,12 @@ fn string(input: &str) -> IResult<&str, String> {
     Ok((input, string.to_string()))
 }
 
+fn comma(input: &str) -> IResult<&str, &str> {
+    preceded(multispace0, tag(",")).parse(input)
+}
+
 fn strings(input: &str) -> IResult<&str, Vec<String>> {
-    separated_list1(preceded(multispace0, tag(",")), string).parse(input)
+    separated_list1(comma, string).parse(input)
 }
 
 fn strings_list(input: &str) -> IResult<&str, Vec<String>> {
@@ -149,17 +153,15 @@ fn color_rgb(input: &str) -> IResult<&str, Color> {
                 delimited(
                     tag("("),
                     tuple((
-                        unsigned8,
-                        preceded(multispace0, tag(",")),
-                        unsigned8,
-                        preceded(multispace0, tag(",")),
+                        terminated(unsigned8, comma),
+                        terminated(unsigned8, comma),
                         unsigned8,
                     )),
                     tag(")"),
                 ),
             ),
         ),
-        |(r, _, g, _, b)| Color::RGBColor(crate::flag::Color { r, g, b }),
+        |(r, g, b)| Color::RGBColor(crate::flag::Color { r, g, b }),
     )
     .parse(input)
 }
@@ -190,6 +192,12 @@ pub enum Element {
     TextColor(Color),
     ColorDeclaration(String, Color),
     Structure(String, Vec<Color>),
+    Triangle(
+        crate::flag::Point,
+        crate::flag::Point,
+        crate::flag::Point,
+        Color,
+    ),
 }
 
 fn comment(input: &str) -> IResult<&str, Element> {
@@ -272,8 +280,53 @@ fn structure(input: &str) -> IResult<&str, Element> {
     .parse(input)
 }
 
+fn point(input: &str) -> IResult<&str, crate::flag::Point> {
+    map(
+        preceded(
+            multispace0,
+            delimited(
+                tag("("),
+                pair(terminated(integer16, comma), integer16),
+                preceded(multispace0, tag(")")),
+            ),
+        ),
+        |(x, y)| crate::flag::Point { x, y },
+    )
+    .parse(input)
+}
+
+fn triangle(input: &str) -> IResult<&str, Element> {
+    map(
+        preceded(
+            multispace0,
+            preceded(
+                tag("Triangle"),
+                tuple((
+                    terminated(point, comma),
+                    terminated(point, comma),
+                    terminated(point, comma),
+                    color,
+                )),
+            ),
+        ),
+        |(p1, p2, p3, color)| Element::Triangle(p1, p2, p3, color),
+    )
+    .parse(input)
+}
+
+fn command(input: &str) -> IResult<&str, Element> {
+    triangle.parse(input)
+}
+
 fn element(input: &str) -> IResult<&str, Element> {
-    alt((comment, variable_declaration, color_declaration, structure)).parse(input)
+    alt((
+        comment,
+        variable_declaration,
+        color_declaration,
+        structure,
+        command,
+    ))
+    .parse(input)
 }
 
 fn elements(input: &str) -> IResult<&str, Vec<Element>> {
@@ -351,6 +404,9 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
             }
             Element::Structure(kind, colors) => {
                 println!("{:?}", (kind, colors));
+            }
+            Element::Triangle(p1, p2, p3, color) => {
+                println!("{:?}", (p1, p2, p3, color));
             }
             Element::Comment => {}
         }
