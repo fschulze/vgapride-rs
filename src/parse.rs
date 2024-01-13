@@ -1,9 +1,9 @@
 use crate::flag::Flag;
 use ahash::AHashMap;
 use nom::branch::alt;
-use nom::bytes::complete::{is_not, tag, take_while1};
+use nom::bytes::complete::{is_not, tag, take_while1, take_while_m_n};
 use nom::character::complete::{alpha1, alphanumeric1, char, digit1, multispace0};
-use nom::combinator::{all_consuming, map, opt, peek};
+use nom::combinator::{all_consuming, map, map_res, opt, peek};
 use nom::multi::{fold_many1, separated_list1};
 use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
 use nom::{IResult, Parser};
@@ -117,6 +117,29 @@ pub enum Color {
     Variable(String),
 }
 
+fn from_hex(input: &str) -> std::result::Result<u8, std::num::ParseIntError> {
+    u8::from_str_radix(input, 16)
+}
+
+fn is_hex_digit(c: char) -> bool {
+    c.is_digit(16)
+}
+
+fn hex_primary(input: &str) -> IResult<&str, u8> {
+    map_res(take_while_m_n(2, 2, is_hex_digit), from_hex)(input)
+}
+
+fn color_hex(input: &str) -> IResult<&str, Color> {
+    map(
+        preceded(
+            preceded(multispace0, tag("#")),
+            tuple((hex_primary, hex_primary, hex_primary)),
+        ),
+        |(r, g, b)| Color::RGBColor(crate::flag::Color { r, g, b }),
+    )
+    .parse(input)
+}
+
 fn color_rgb(input: &str) -> IResult<&str, Color> {
     map(
         preceded(
@@ -146,7 +169,7 @@ fn color_variable(input: &str) -> IResult<&str, Color> {
 }
 
 fn color(input: &str) -> IResult<&str, Color> {
-    alt((color_rgb, color_variable)).parse(input)
+    alt((color_hex, color_rgb, color_variable)).parse(input)
 }
 
 #[derive(Debug)]
