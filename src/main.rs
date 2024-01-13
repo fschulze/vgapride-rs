@@ -39,8 +39,11 @@ fn read_flag(path: PathBuf) -> Result<Option<Flag>> {
     if let Some(extension) = path.extension() {
         let extension = extension.to_ascii_lowercase();
         if extension == "flag" && path.is_file() {
-            let content = std::fs::read_to_string(path)?;
-            return Ok(Some(vgapride::parse::parse_flag(&content)?));
+            let content = std::fs::read_to_string(path.clone())?;
+            return Ok(Some(
+                vgapride::parse::parse_flag(&content)
+                    .with_context(|| format!("Error reading {:?}", path))?,
+            ));
         }
     }
     Ok(None)
@@ -76,7 +79,7 @@ fn main() -> Result<()> {
         })
         .init();
     log::debug!("{:?}", args);
-    run(args).with_context(|| "Error")?;
+    run(args)?;
     Ok(())
 }
 

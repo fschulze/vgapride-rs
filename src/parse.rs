@@ -3,9 +3,9 @@ use ahash::AHashMap;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_while1, take_while_m_n};
 use nom::character::complete::{alpha1, alphanumeric1, char, digit1, multispace0};
-use nom::combinator::{all_consuming, map, map_res, opt, peek};
-use nom::multi::{fold_many1, separated_list1};
-use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
+use nom::combinator::{all_consuming, map, map_res, opt, recognize};
+use nom::multi::{fold_many1, many0_count, separated_list1};
+use nom::sequence::{delimited, pair, preceded, separated_pair, terminated, tuple};
 use nom::{IResult, Parser};
 use std::backtrace::Backtrace;
 use std::str::FromStr;
@@ -52,8 +52,8 @@ impl From<nom::Err<nom::error::Error<&str>>> for ParseError {
     }
 }
 
-fn name(input: &str) -> IResult<&str, &str> {
-    preceded(peek(alpha1), alphanumeric1).parse(input)
+pub fn name(input: &str) -> IResult<&str, &str> {
+    recognize(pair(alpha1, many0_count(alt((alphanumeric1, tag("_")))))).parse(input)
 }
 
 fn variable_name(input: &str) -> IResult<&str, &str> {
@@ -172,6 +172,14 @@ fn color(input: &str) -> IResult<&str, Color> {
     alt((color_hex, color_rgb, color_variable)).parse(input)
 }
 
+fn colors(input: &str) -> IResult<&str, Vec<Color>> {
+    fold_many1(color, Vec::new, |mut colors, color| {
+        colors.push(color);
+        colors
+    })
+    .parse(input)
+}
+
 #[derive(Debug)]
 pub enum Element {
     Comment,
@@ -181,6 +189,7 @@ pub enum Element {
     TextSize(i16),
     TextColor(Color),
     ColorDeclaration(String, Color),
+    Structure(String, Vec<Color>),
 }
 
 fn comment(input: &str) -> IResult<&str, Element> {
@@ -248,8 +257,23 @@ fn variable_declaration(input: &str) -> IResult<&str, Element> {
     Ok((input, variable_declaration))
 }
 
+fn structure(input: &str) -> IResult<&str, Element> {
+    map(
+        pair(
+            preceded(multispace0, alt((tag("horizontal"), tag("vertical")))),
+            delimited(
+                preceded(multispace0, tag("{")),
+                colors,
+                preceded(multispace0, tag("}")),
+            ),
+        ),
+        |(kind, colors)| Element::Structure(kind.to_string(), colors),
+    )
+    .parse(input)
+}
+
 fn element(input: &str) -> IResult<&str, Element> {
-    alt((comment, variable_declaration, color_declaration)).parse(input)
+    alt((comment, variable_declaration, color_declaration, structure)).parse(input)
 }
 
 fn elements(input: &str) -> IResult<&str, Vec<Element>> {
@@ -260,8 +284,8 @@ fn elements(input: &str) -> IResult<&str, Vec<Element>> {
 }
 
 pub fn parse_flag(input: &str) -> Result<Flag> {
-    let (_, elements) = elements(input)?;
-    // let (_, elements) = all_consuming(elements)(input)?;
+    // let (_, elements) = elements(input)?;
+    let (_, elements) = all_consuming(terminated(elements, multispace0))(input)?;
     let mut names = None;
     let mut description = None;
     let mut credits = None;
@@ -325,6 +349,9 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
                     }
                 };
             }
+            Element::Structure(kind, colors) => {
+                println!("{:?}", (kind, colors));
+            }
             Element::Comment => {}
         }
     }
@@ -341,6 +368,30 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
 mod tests {
     use super::*;
     use nom::error::{ErrorKind, ParseError};
+
+    #[test]
+    fn test_name() {
+        assert_eq!(name("a"), Ok(("", "a")));
+        assert_eq!(name("a1"), Ok(("", "a1")));
+        assert_eq!(name("ab"), Ok(("", "ab")));
+        assert_eq!(
+            name("1a"),
+            Err(nom::Err::Error(ParseError::from_error_kind(
+                "1a",
+                ErrorKind::Alpha
+            )))
+        );
+        assert_eq!(name("a_"), Ok(("", "a_")));
+        assert_eq!(name("a_1"), Ok(("", "a_1")));
+        assert_eq!(name("a_b"), Ok(("", "a_b")));
+        assert_eq!(
+            name("_1a"),
+            Err(nom::Err::Error(ParseError::from_error_kind(
+                "_1a",
+                ErrorKind::Alpha
+            )))
+        );
+    }
 
     #[test]
     fn test_string_chars() {
