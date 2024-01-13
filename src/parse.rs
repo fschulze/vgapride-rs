@@ -2,7 +2,7 @@ use crate::flag::Flag;
 use ahash::AHashMap;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_while1, take_while_m_n};
-use nom::character::complete::{alpha1, alphanumeric1, char, digit1, multispace0};
+use nom::character::complete::{alpha1, alphanumeric1, char, digit1, multispace0, space1};
 use nom::combinator::{all_consuming, map, map_res, opt, recognize};
 use nom::multi::{fold_many1, many0_count, separated_list1};
 use nom::sequence::{delimited, pair, preceded, separated_pair, terminated, tuple};
@@ -191,6 +191,7 @@ pub enum Element {
     TextSize(i16),
     TextColor(Color),
     ColorDeclaration(String, Color),
+    Include(String),
     Structure(String, Vec<Color>),
     Triangle(
         crate::flag::Point,
@@ -265,6 +266,17 @@ fn variable_declaration(input: &str) -> IResult<&str, Element> {
     Ok((input, variable_declaration))
 }
 
+fn include(input: &str) -> IResult<&str, Element> {
+    map(
+        preceded(
+            multispace0,
+            preceded(terminated(tag("#include"), space1), string),
+        ),
+        |name| Element::Include(name),
+    )
+    .parse(input)
+}
+
 fn structure(input: &str) -> IResult<&str, Element> {
     map(
         pair(
@@ -315,7 +327,7 @@ fn triangle(input: &str) -> IResult<&str, Element> {
 }
 
 fn command(input: &str) -> IResult<&str, Element> {
-    triangle.parse(input)
+    alt((include, triangle)).parse(input)
 }
 
 fn element(input: &str) -> IResult<&str, Element> {
@@ -402,11 +414,14 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
                     }
                 };
             }
+            Element::Include(name) => {
+                println!("include {:?}", name);
+            }
             Element::Structure(kind, colors) => {
                 println!("{:?}", (kind, colors));
             }
             Element::Triangle(p1, p2, p3, color) => {
-                println!("{:?}", (p1, p2, p3, color));
+                println!("triangle {:?}", (p1, p2, p3, color));
             }
             Element::Comment => {}
         }
