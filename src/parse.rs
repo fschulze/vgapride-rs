@@ -1,11 +1,13 @@
 use crate::flag::Flag;
 use nom::branch::alt;
-use nom::bytes::complete::{tag, take_while1};
-use nom::character::complete::multispace0;
+use nom::bytes::complete::{is_not, tag, take_while1};
+use nom::character::complete::{alpha1, alphanumeric1, char, digit1, multispace0};
+use nom::combinator::{all_consuming, map, opt, peek};
 use nom::multi::{fold_many1, separated_list1};
-use nom::sequence::{delimited, preceded};
+use nom::sequence::{delimited, pair, preceded, tuple};
 use nom::{IResult, Parser};
 use std::backtrace::Backtrace;
+use std::str::FromStr;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -74,11 +76,93 @@ fn strings_list(input: &str) -> IResult<&str, Vec<String>> {
     .parse(input)
 }
 
+fn signed_num(input: &str) -> IResult<&str, (bool, &str)> {
+    let (input, sign) = opt(alt((char('+'), char('-'))))(input)?;
+    let (input, num) = digit1(input)?;
+    let neg = match sign {
+        Some(sign) => sign == '-',
+        None => false,
+    };
+    Ok((input, (neg, num)))
+}
+
+fn integer16(input: &str) -> IResult<&str, i16> {
+    let (input, (neg, num)) = preceded(multispace0, signed_num)(input)?;
+    let mut num = i16::from_str(num).expect("Failed to parse i16");
+    if neg {
+        num = -num;
+    }
+    Ok((input, num))
+}
+
+fn unsigned8(input: &str) -> IResult<&str, u8> {
+    map(preceded(multispace0, digit1), |r: &str| {
+        u8::from_str(r).expect("Failed to parse u8")
+    })
+    .parse(input)
+}
+
+#[derive(Debug)]
+pub enum Color {
+    RGBColor(crate::flag::Color),
+    Variable(String),
+}
+
+fn color_rgb(input: &str) -> IResult<&str, Color> {
+    map(
+        preceded(
+            multispace0,
+            preceded(
+                tag("RGB"),
+                delimited(
+                    tag("("),
+                    tuple((
+                        unsigned8,
+                        preceded(multispace0, tag(",")),
+                        unsigned8,
+                        preceded(multispace0, tag(",")),
+                        unsigned8,
+                    )),
+                    tag(")"),
+                ),
+            ),
+        ),
+        |(r, _, g, _, b)| Color::RGBColor(crate::flag::Color { r, g, b }),
+    )
+    .parse(input)
+}
+
+fn color_variable(input: &str) -> IResult<&str, Color> {
+    map(
+        preceded(
+            multispace0,
+            preceded(tag("$"), preceded(peek(alpha1), alphanumeric1)),
+        ),
+        |r: &str| Color::Variable(r.to_string()),
+    )
+    .parse(input)
+}
+
+fn color(input: &str) -> IResult<&str, Color> {
+    alt((color_rgb, color_variable)).parse(input)
+}
+
 #[derive(Debug)]
 pub enum Element {
+    Comment,
     Names(Vec<String>),
     Description(String),
     Credits(String),
+    TextSize(i16),
+    TextColor(Color),
+}
+
+fn comment(input: &str) -> IResult<&str, Element> {
+    map(
+        preceded(multispace0, pair(tag("//"), is_not("\n\r"))),
+        |_| Element::Comment,
+    )
+    .parse(input)
 }
 
 fn names(input: &str) -> IResult<&str, Element> {
@@ -105,16 +189,39 @@ fn credits(input: &str) -> IResult<&str, Element> {
     Ok((input, Element::Credits(credits)))
 }
 
-fn variable(input: &str) -> IResult<&str, Element> {
-    let (input, variable) = preceded(
-        multispace0,
-        preceded(tag("$"), alt((names, description, credits))),
+fn textsize(input: &str) -> IResult<&str, Element> {
+    let (input, textsize) = preceded(
+        tag("textsize"),
+        preceded(preceded(multispace0, tag("=")), integer16),
     )(input)?;
-    Ok((input, variable))
+    Ok((input, Element::TextSize(textsize)))
+}
+
+fn textcolor(input: &str) -> IResult<&str, Element> {
+    let (input, textcolor) = preceded(
+        tag("textcolor"),
+        preceded(preceded(multispace0, tag("=")), color),
+    )(input)?;
+    Ok((input, Element::TextColor(textcolor)))
+}
+
+fn variable_declaration(input: &str) -> IResult<&str, Element> {
+    let (input, variable_declaration) = preceded(
+        multispace0,
+        preceded(
+            tag("$"),
+            alt((names, description, credits, textsize, textcolor)),
+        ),
+    )(input)?;
+    Ok((input, variable_declaration))
+}
+
+fn element(input: &str) -> IResult<&str, Element> {
+    alt((comment, variable_declaration)).parse(input)
 }
 
 fn elements(input: &str) -> IResult<&str, Vec<Element>> {
-    fold_many1(variable, Vec::new, |mut elements, element| {
+    fold_many1(element, Vec::new, |mut elements, element| {
         elements.push(element);
         elements
     })(input)
@@ -122,9 +229,12 @@ fn elements(input: &str) -> IResult<&str, Vec<Element>> {
 
 pub fn parse_flag(input: &str) -> Result<Flag> {
     let (_, elements) = elements(input)?;
+    // let (_, elements) = all_consuming(elements)(input)?;
     let mut names = None;
     let mut description = None;
     let mut credits = None;
+    let mut textsize = None;
+    let mut textcolor = None;
     for element in elements {
         match element {
             Element::Names(_names) => {
@@ -148,12 +258,28 @@ pub fn parse_flag(input: &str) -> Result<Flag> {
                     return Err(ParseError::MultipleError("$credits".to_string()));
                 }
             }
+            Element::TextSize(_textsize) => {
+                if let None = textsize {
+                    textsize.replace(_textsize);
+                } else {
+                    return Err(ParseError::MultipleError("$textsize".to_string()));
+                }
+            }
+            Element::TextColor(_textcolor) => {
+                if let None = textcolor {
+                    textcolor.replace(_textcolor);
+                } else {
+                    return Err(ParseError::MultipleError("$textcolor".to_string()));
+                }
+            }
+            Element::Comment => {}
         }
     }
     Ok(Flag {
         names: names.ok_or(ParseError::MissingError("$names".to_string()))?,
         description: description.ok_or(ParseError::MissingError("$description".to_string()))?,
         credits,
+        textsize: textsize.unwrap_or(4),
     })
 }
 
