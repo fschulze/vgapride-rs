@@ -25,11 +25,11 @@ pub struct Point {
     pub y: i16,
 }
 
+//sdl-bgi
 #[derive(Debug)]
 pub enum Command {
     Rectangle(Point, Point, Color),
-    Triangle(Point, Point, Point, Color),
-    Polygon(PolygonType, Vec<Point>, Color),
+    Polygon(PolygonType, Point, Vec<Point>, Color),
 }
 
 #[derive(Debug)]

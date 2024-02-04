@@ -67,11 +67,11 @@ fn string_chars(input: &str) -> IResult<&str, &str> {
 }
 
 fn string(input: &str) -> IResult<&str, String> {
-    let (input, _) = multispace0.parse(input)?;
-    let (input, _) = tag("\"").parse(input)?;
-    let (input, string) = string_chars.parse(input)?;
-    let (input, _) = tag("\"").parse(input)?;
-    Ok((input, string.to_string()))
+    map(
+        delimited(preceded(multispace0, tag("\"")), string_chars, tag("\"")),
+        |r: &str| r.to_string(),
+    )
+    .parse(input)
 }
 
 fn comma(input: &str) -> IResult<&str, &str> {
@@ -101,20 +101,20 @@ fn signed_num(input: &str) -> IResult<&str, (bool, &str)> {
     Ok((input, (neg, num)))
 }
 
-fn integer16(input: &str) -> IResult<&str, i16> {
-    let (input, (neg, num)) = preceded(multispace0, signed_num)(input)?;
-    let mut num = i16::from_str(num).expect("Failed to parse i16");
-    if neg {
-        num = -num;
-    }
-    Ok((input, num))
+fn unsigned8_from(input: &str) -> std::result::Result<u8, std::num::ParseIntError> {
+    u8::from_str(input)
+}
+
+fn signed16_from(input: &str) -> std::result::Result<i16, std::num::ParseIntError> {
+    i16::from_str(input)
 }
 
 fn unsigned8(input: &str) -> IResult<&str, u8> {
-    map(preceded(multispace0, digit1), |r: &str| {
-        u8::from_str(r).expect("Failed to parse u8")
-    })
-    .parse(input)
+    map_res(preceded(multispace0, digit1), unsigned8_from).parse(input)
+}
+
+fn integer16(input: &str) -> IResult<&str, i16> {
+    map_res(preceded(multispace0, recognize(signed_num)), signed16_from).parse(input)
 }
 
 #[derive(Debug)]
@@ -123,7 +123,7 @@ pub enum Color {
     Variable(String),
 }
 
-fn from_hex(input: &str) -> std::result::Result<u8, std::num::ParseIntError> {
+fn unsigned8_from_hex(input: &str) -> std::result::Result<u8, std::num::ParseIntError> {
     u8::from_str_radix(input, 16)
 }
 
@@ -132,7 +132,7 @@ fn is_hex_digit(c: char) -> bool {
 }
 
 fn hex_primary(input: &str) -> IResult<&str, u8> {
-    map_res(take_while_m_n(2, 2, is_hex_digit), from_hex)(input)
+    map_res(take_while_m_n(2, 2, is_hex_digit), unsigned8_from_hex)(input)
 }
 
 fn color_hex(input: &str) -> IResult<&str, Color> {
@@ -201,11 +201,10 @@ pub enum Element {
     ColorDeclaration(String, Color),
     Include(String),
     Structure(StructureType, Vec<Color>),
-    Polygon(crate::flag::PolygonType, Vec<crate::flag::Point>, Color),
-    Triangle(
+    Polygon(
+        crate::flag::PolygonType,
         crate::flag::Point,
-        crate::flag::Point,
-        crate::flag::Point,
+        Vec<crate::flag::Point>,
         Color,
     ),
 }
@@ -354,37 +353,19 @@ fn polygon(input: &str) -> IResult<&str, Element> {
                 tag("Polygon"),
                 tuple((
                     terminated(polygon_type, comma),
+                    terminated(point, comma),
                     terminated(points_list, comma),
                     color,
                 )),
             ),
         ),
-        |(kind, points, color)| Element::Polygon(kind, points, color),
-    )
-    .parse(input)
-}
-
-fn triangle(input: &str) -> IResult<&str, Element> {
-    map(
-        preceded(
-            multispace0,
-            preceded(
-                tag("Triangle"),
-                tuple((
-                    terminated(point, comma),
-                    terminated(point, comma),
-                    terminated(point, comma),
-                    color,
-                )),
-            ),
-        ),
-        |(p1, p2, p3, color)| Element::Triangle(p1, p2, p3, color),
+        |(kind, start, points, color)| Element::Polygon(kind, start, points, color),
     )
     .parse(input)
 }
 
 fn command(input: &str) -> IResult<&str, Element> {
-    alt((include, polygon, triangle)).parse(input)
+    alt((include, polygon)).parse(input)
 }
 
 fn element(input: &str) -> IResult<&str, Element> {
@@ -514,23 +495,14 @@ pub fn parse_flag(input: &str) -> Result<(Vec<String>, Flag)> {
                     commands.push(Command::Rectangle(a, b, *color));
                 }
             }
-            Element::Polygon(kind, points, _color) => {
+            Element::Polygon(kind, start, points, _color) => {
                 let color = match _color {
                     Color::RGBColor(color) => color,
                     Color::Variable(_name) => *colors
                         .get(&_name)
                         .ok_or(ParseError::MissingError(format!("${}", _name)))?,
                 };
-                commands.push(Command::Polygon(kind, points, color));
-            }
-            Element::Triangle(p1, p2, p3, _color) => {
-                let color = match _color {
-                    Color::RGBColor(color) => color,
-                    Color::Variable(_name) => *colors
-                        .get(&_name)
-                        .ok_or(ParseError::MissingError(format!("${}", _name)))?,
-                };
-                commands.push(Command::Triangle(p1, p2, p3, color));
+                commands.push(Command::Polygon(kind, start, points, color));
             }
             Element::Comment => {}
         }
@@ -551,7 +523,31 @@ pub fn parse_flag(input: &str) -> Result<(Vec<String>, Flag)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nom::error::Error;
+    use nom::error::FromExternalError;
     use nom::error::{ErrorKind, ParseError};
+
+    #[test]
+    fn test_integer16() {
+        assert_eq!(integer16("32767"), Ok(("", 32767)));
+        assert_eq!(integer16("-32768"), Ok(("", -32768)));
+        assert_eq!(
+            integer16("32768"),
+            Err(nom::Err::Error(Error::from_external_error(
+                "32768",
+                ErrorKind::MapRes,
+                "32768".parse::<i16>().unwrap_err()
+            )))
+        );
+        assert_eq!(
+            integer16("-32769"),
+            Err(nom::Err::Error(Error::from_external_error(
+                "-32769",
+                ErrorKind::MapRes,
+                "-32769".parse::<i16>().unwrap_err()
+            )))
+        );
+    }
 
     #[test]
     fn test_name() {
