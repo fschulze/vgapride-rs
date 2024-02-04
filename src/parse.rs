@@ -1,4 +1,4 @@
-use crate::flag::{Command, Flag};
+use crate::flag::{Command, Commands, Flag};
 use ahash::AHashMap;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_while1, take_while_m_n};
@@ -393,7 +393,7 @@ pub fn parse_flag(input: &str) -> Result<(Vec<String>, Flag)> {
     let mut credits = None;
     let mut textsize = None;
     let mut textcolor = None;
-    let mut commands = Vec::new();
+    let mut commands = Commands::new();
     let mut includes = Vec::new();
     let mut colors: AHashMap<String, crate::flag::Color> = Default::default();
     colors.insert("black".to_string(), crate::flag::Color::new(0, 0, 0));

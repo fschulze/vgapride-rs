@@ -1,11 +1,12 @@
 #![feature(error_generic_member_access)]
+use ahash::AHashMap;
 use anyhow::Context;
 use clap::Parser;
 use concolor_clap::ColorChoice;
 use env_logger::WriteStyle;
 use std::path::PathBuf;
 use thiserror::Error;
-use vgapride::flag::Flag;
+use vgapride::flag::{Commands, Flag};
 
 #[derive(Debug, Error)]
 pub enum MainError {
@@ -64,10 +65,22 @@ fn run(args: Args) -> Result<()> {
             flags.push(flag);
         }
     }
-    for (includes, flag) in flags {
+    let mut name2index: AHashMap<String, usize> = AHashMap::new();
+    for (index, (_includes, flag)) in flags.iter().enumerate() {
+        for name in &flag.names {
+            name2index.insert(name.to_string(), index);
+        }
+    }
+    for (includes, flag) in &flags {
+        let mut commands = Commands::new();
+        for include in includes {
+            let (_, flag) = &flags[name2index[include]];
+            commands.extend(&flag.commands);
+        }
+        commands.extend(&flag.commands);
         println!("{:?}", flag.names);
         println!("includes {:?}", includes);
-        println!("{:?}\n", flag.commands);
+        println!("{:?}\n", commands);
     }
     Ok(())
 }
