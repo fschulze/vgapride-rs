@@ -7,6 +7,7 @@ use env_logger::WriteStyle;
 use std::path::PathBuf;
 use thiserror::Error;
 use vgapride::flag::{Commands, Flag};
+use vgapride::svg::render;
 
 #[derive(Debug, Error)]
 pub enum MainError {
@@ -80,7 +81,8 @@ fn run(args: Args) -> Result<()> {
         commands.extend(&flag.commands);
         println!("{:?}", flag.names);
         println!("includes {:?}", includes);
-        println!("{:?}\n", commands);
+        let mut f = std::fs::File::create(format!("{}.svg", flag.names[0]))?;
+        render(&mut f, commands)?;
     }
     Ok(())
 }
